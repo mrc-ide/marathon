@@ -1,0 +1,4 @@
+url: https://mrc-ide.github.io/marathon
+
+template:
+  bootstrap: 5
