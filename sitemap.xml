@@ -1,8 +1,8 @@
 <urlset xmlns = 'http://www.sitemaps.org/schemas/sitemap/0.9'>
-<url><loc>/404.html</loc></url>
-<url><loc>/LICENSE-text.html</loc></url>
-<url><loc>/authors.html</loc></url>
-<url><loc>/index.html</loc></url>
-<url><loc>/reference/index.html</loc></url>
+<url><loc>https://mrc-ide.github.io/marathon/404.html</loc></url>
+<url><loc>https://mrc-ide.github.io/marathon/LICENSE-text.html</loc></url>
+<url><loc>https://mrc-ide.github.io/marathon/authors.html</loc></url>
+<url><loc>https://mrc-ide.github.io/marathon/index.html</loc></url>
+<url><loc>https://mrc-ide.github.io/marathon/reference/index.html</loc></url>
 </urlset>
 
