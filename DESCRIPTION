@@ -1,5 +1,5 @@
 Package: marathon
-Title: Package Title Here
+Title: Run Models a Lot
 Version: 0.1.0
 Authors@R: c(person("Rich", "FitzJohn", role = c("aut", "cre"),
                     email = "rich.fitzjohn@gmail.com"),
