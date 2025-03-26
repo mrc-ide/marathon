@@ -1,0 +1,54 @@
+---
+title: "Design"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Design}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+The design of, and ideas behind, marathon.
+
+# Scalable levels of complexity
+
+For use in big experiments, we might want to save many GB of data and efficiency of storage will be very important, but when **starting** an experiment, we want to be able to run everything on a single machine and not worry about setting up lots of different moving parts like storage and compute providers.
+
+We will try and separate out:
+
+* **where the calculations happen**: The simplest place to do calculations is synchronously on the same machine, then batching on the same machine, then submission to some queue or cluster.  For internal DIDE users, we expect to write wrappers for at least `rrq` and `hipercow`.
+* **where the calculations are stored**: The simplest is to store on disk, or we could store on some shared filesystem or in some object store (e.g. S3 buckets) or database.  For internal DIDE users, we will set up some database and object store to try working with these as an alternative to saving files on disk.
+* **how the evaluation environment is configured**: We might want to make it easy to work with things like docker containers if that is how people want to work, or with `renv`, or with things like `conan`.  Or we just do whatever with the currently loaded R and its packages.
+
+# Define experiments and expand them later
+
+Things change and we should embrace this.  We might start by two parameters `a` and `b` and looking at some output.  If we add `c` as a predictor we should be able to reuse all of our previous results easily enough.  Allow easy reuse of the data that has been previously computed.
+
+# Other features
+
+Some other features that we will work towards
+
+## Flexible, open, formats
+
+We are imagining that in many cases the modelling results will be created in one language (say R) for use in another (say Python), and so we will avoid saving anything in language-specific formats (e.g., `rds`, `pickle`).  Because modelling results are necessarily complex and will not naturally conform to a single table, we are likely to use JSON as an intermediate format, and will provide basic schemas to use to describe and validate the output.
+
+## Automatic recording of metadata
+
+Like `orderly`, but on a smaller scale, we will automate the saving of metadata (date, machine information, package versions).  We will also expose this to be queried against, to make the bank of model results more useful.
+
+## Web APIs
+
+It should be possible to create and save experiments, contribute runs, etc over an API so that we can make the fewest assumptions about how the data is stored and where the calculations are stored.  We might also offer offline exported views of the data (e.g., export to a database suitable for use with `duckdb` or similar).  This separation may be useful where the model runs are carried out on one cluster, saving results into an S3 bucket on a storage provider that is not available as a shared filesystem and consumed from a separate machine running a different operating system.
+
+# Moving parts
+
+1. Define an project/experiment; defines the parameters that can be altered (and their ranges?) and the expected outputs.  The user will need to provide some code here that can satisfy this contract, and we should check that it works.  We need to store this all somewhere of course, so this is our first interaction with the storage backend.  We will want to save a few bits of metadata about the model here (e.g., is it stochastic or not, how many cores can it run on and how can this be configured) and we can advertise these later on.
+2. Define a batch of runs of the model; these will include a grid of parameters typically.  Batches will nest within an experiment.  For stochastic models, we will often want replicate simulations.  We are interested here in defining the idea of a batch of runs and saving this into some storage so that it can be queried by runners and consumers.  Typically this would not actually run anything.  We might want to offer something like sampling using LHS given a set of ranges of parameters, or a refinable set (i.e., quickly spin up a simulation set of `n` points per dimension and then sample another set that embeds the original set (e.g. https://www.jstor.org/stable/27798879 or https://doi.org/10.1016/j.spl.2017.10.022 )
+3. Pop a task off the queue, and run it, pushing results into the database.  This is probably going to be the most fiddly to run and where we really get into the weeds of how we want to run things.  The simplest thing is probably to roll half of this in with the previous step: if we are using a cluster (e.g. `hipercow`) or `rrq` backend then creation of the batch should also submit the request to run it to the system.  The runner then gets an identifier (`:project/:batch/:id`) to run, so it's all pretty easy.
+4. Query the results!  It's not clear how much we want to include things like sampling randomly from the the set of simulations.
