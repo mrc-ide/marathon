@@ -9,5 +9,5 @@ scalar <- function(x) {
 
 
 package_version_string <- function(name) {
-  as.character(packageVersion(name))
+  as.character(utils::packageVersion(name))
 }
