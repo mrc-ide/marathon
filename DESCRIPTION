@@ -13,5 +13,12 @@ RoxygenNote: 7.1.1
 URL: https://mrc-ide.github.io/marathon, https://github.com/mrc-ide/marathon
 BugReports: https://github.com/mrc-ide/marathon/issues
 Suggests:
+    jsonvalidate,
+    knitr,
+    rmarkdown,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+VignetteBuilder: knitr
+Language: en-GB
