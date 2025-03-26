@@ -22,3 +22,4 @@
 ^\.github$
 \.*gcov$
 air.toml
+^_pkgdown\.yml$
