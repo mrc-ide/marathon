@@ -11,6 +11,7 @@ Encoding: UTF-8
 URL: https://mrc-ide.github.io/marathon, https://github.com/mrc-ide/marathon
 BugReports: https://github.com/mrc-ide/marathon/issues
 Imports:
+    jsonlite,
     porcelain
 Suggests:
     jsonvalidate,
