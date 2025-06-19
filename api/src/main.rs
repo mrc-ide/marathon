@@ -1,8 +1,9 @@
 use anyhow::bail;
-use marathon_api::{task, TaskRequest};
+use marathon_api::{server, task, Client, TaskRequest};
 use std::collections::HashMap;
 
 use clap::{Parser, Subcommand};
+use std::net::SocketAddr;
 
 #[derive(Parser)]
 struct Args {
@@ -13,10 +14,20 @@ struct Args {
 #[derive(Subcommand, Clone)]
 enum Command {
     Run {
-        cmdline: Vec<String>,
-
         #[arg(short = 'e', long = "env")]
         environment: Vec<String>,
+        cmdline: Vec<String>,
+    },
+    Submit {
+        #[arg(long)]
+        server: reqwest::Url,
+        #[arg(short = 'e', long = "env")]
+        environment: Vec<String>,
+        cmdline: Vec<String>,
+    },
+    Server {
+        #[arg(long, default_value = "0.0.0.0:8000")]
+        listen: SocketAddr,
     },
 }
 
@@ -69,6 +80,20 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", l);
             }
             println!("Task terminated with {}", result.status);
+        }
+        Command::Submit {
+            server,
+            cmdline,
+            environment,
+        } => {
+            let client = Client::new(server);
+            client.submit(&TaskRequest {
+                cmdline,
+                environment: parse_environment(&environment, |k| std::env::var(k))?,
+            })?;
+        }
+        Command::Server { listen } => {
+            server::start(&listen);
         }
     }
     Ok(())

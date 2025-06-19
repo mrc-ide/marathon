@@ -1,11 +1,12 @@
 use anyhow::bail;
 use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, ExitStatus};
 use tempdir::TempDir;
 
-#[derive(Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct TaskRequest {
     pub cmdline: Vec<String>,
     pub environment: HashMap<String, String>,
