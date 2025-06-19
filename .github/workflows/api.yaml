@@ -1,0 +1,28 @@
+on:
+  push:
+  pull_request:
+
+name: Build and test the API
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: cargo clippy --tests -- -D warnings
+        working-directory: api
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: api
+      - name: Build (debug)
+        run: cargo build
+        working-directory: api
+      - name: Test (debug)
+        run: cargo test
+        working-directory: api
+      - name: Build (release)
+        run: cargo build --release
+        working-directory: api
+      - name: Test (release)
+        run: cargo test --release
+        working-directory: api
