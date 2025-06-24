@@ -17,9 +17,12 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     match args.cmd {
         Command::Run { cmdline } => {
-            task::execute(&TaskRequest { cmdline })?;
+            let result = task::execute(&TaskRequest { cmdline })?;
+            for l in result.output {
+                println!("{}", l);
+            }
+            println!("Task terminated with {}", result.status);
         }
     }
-
     Ok(())
 }

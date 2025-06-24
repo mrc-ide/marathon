@@ -1,5 +1,6 @@
 use anyhow::bail;
 use anyhow::Context as _;
+use std::io::Read;
 use std::process::{Command, ExitStatus};
 use tempdir::TempDir;
 
@@ -19,11 +20,15 @@ pub fn execute(request: &TaskRequest) -> crate::Result<TaskResult> {
         bail!("Task command is empty")
     }
 
+    let (mut recv, send) = std::io::pipe()?;
+
     let wd = TempDir::new("task")?;
-    let command = Command::new(&request.cmdline[0])
+    let mut child = Command::new(&request.cmdline[0])
         .args(&request.cmdline[1..])
         .current_dir(&wd)
-        .output()
+        .stdout(send.try_clone()?)
+        .stderr(send)
+        .spawn()
         .with_context(|| {
             format!(
                 "Failed to start command: {}",
@@ -32,23 +37,17 @@ pub fn execute(request: &TaskRequest) -> crate::Result<TaskResult> {
             )
         })?;
 
-    // TODO: these should be interleaved rather than concatenated. Rust stdlib doesn't seem to
-    // have an easy way to create subprocesses with merged stdout and stderr.
     let mut output = Vec::new();
-    output.extend(
-        String::from_utf8_lossy(&command.stdout)
-            .lines()
-            .map(String::from),
-    );
-    output.extend(
-        String::from_utf8_lossy(&command.stderr)
-            .lines()
-            .map(String::from),
-    );
+    recv.read_to_end(&mut output)?;
+
+    let status = child.wait()?;
 
     Ok(TaskResult {
-        status: command.status,
-        output,
+        status,
+        output: String::from_utf8_lossy(&output)
+            .lines()
+            .map(String::from)
+            .collect(),
     })
 }
 
