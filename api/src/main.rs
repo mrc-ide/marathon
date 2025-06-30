@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::bail;
 use marathon_api::{task, TaskRequest};
 use std::collections::HashMap;
 
@@ -20,31 +20,37 @@ enum Command {
     },
 }
 
-// Parse a list of arguments given to the -e flag, and returns a map from key to value:
-// - If the argument has the form KEY=VALUE, then (KEY, VALUE) is used
+// Parse an argument given to the -e flag, and returns an optional key-value pair:
+// - If the argument has the form KEY=VALUE, then (KEY, VALUE) is returned
 // - If the argument has the form KEY and KEY exists in the current process' environment, that
 //   value is used
-// - If the arguments has the form KEY and KEY does not exist in the process' environment, the
-//   argument is ignored
+// - If the arguments has the form KEY and KEY does not exist in the process' environment, None is
+//   returned
 //
 // This is the same behaviour used by the `docker run` command.
-fn parse_environment(env: &[String]) -> anyhow::Result<HashMap<String, String>> {
-    env.iter()
-        .filter_map(|arg| {
-            if let Some((key, value)) = arg.split_once("=") {
-                Some(Ok((key.to_owned(), value.to_owned())))
-            } else {
-                use std::env::VarError::*;
-                match std::env::var(arg) {
-                    Ok(value) => Some(Ok((arg.to_owned(), value))),
-                    Err(NotPresent) => None,
-                    Err(NotUnicode(_)) => Some(Err(anyhow!(
-                        "Environment variable {} contains invalid characters",
-                        arg
-                    ))),
-                }
-            }
-        })
+fn parse_environment_arg<E>(arg: &str, getenv: E) -> anyhow::Result<Option<(String, String)>>
+where
+    E: Fn(&str) -> Result<String, std::env::VarError>,
+{
+    if let Some((key, value)) = arg.split_once("=") {
+        Ok(Some((key.to_owned(), value.to_owned())))
+    } else {
+        use std::env::VarError::*;
+        match getenv(arg) {
+            Ok(value) => Ok(Some((arg.to_owned(), value))),
+            Err(NotPresent) => Ok(None),
+            Err(NotUnicode(_)) => bail!("Environment variable {} contains invalid characters", arg),
+        }
+    }
+}
+
+fn parse_environment<S, E>(args: &[S], getenv: E) -> anyhow::Result<HashMap<String, String>>
+where
+    S: AsRef<str>,
+    E: Fn(&str) -> Result<String, std::env::VarError>,
+{
+    args.iter()
+        .filter_map(move |arg| parse_environment_arg(arg.as_ref(), &getenv).transpose())
         .collect()
 }
 
@@ -57,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let result = task::execute(&TaskRequest {
                 cmdline,
-                environment: parse_environment(&environment)?,
+                environment: parse_environment(&environment, |k| std::env::var(k))?,
             })?;
             for l in result.output {
                 println!("{}", l);
@@ -66,4 +72,31 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assertor::*;
+
+    #[test]
+    fn can_parse_environment() -> anyhow::Result<()> {
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+
+        let env: HashMap<String, String> = HashMap::from([pair("A", "foo"), pair("B", "bar")]);
+        let getenv = |k: &str| env.get(k).cloned().ok_or(std::env::VarError::NotPresent);
+
+        assert_that!(parse_environment(
+            &["A", "B=override", "C", "D=value", "E=key=value"],
+            getenv
+        )?)
+        .contains_exactly(HashMap::from([
+            pair("A", "foo"),
+            pair("B", "override"),
+            pair("D", "value"),
+            pair("E", "key=value"),
+        ]));
+
+        Ok(())
+    }
 }
