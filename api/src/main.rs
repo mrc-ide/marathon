@@ -72,9 +72,10 @@ fn main() -> anyhow::Result<()> {
             cmdline,
             environment,
         } => {
+            let environment = parse_environment(&environment, |k| std::env::var(k))?;
             let result = task::execute(&TaskRequest {
                 cmdline,
-                environment: parse_environment(&environment, |k| std::env::var(k))?,
+                environment,
             })?;
             for l in result.output {
                 println!("{}", l);
@@ -86,11 +87,13 @@ fn main() -> anyhow::Result<()> {
             cmdline,
             environment,
         } => {
+            let environment = parse_environment(&environment, |k| std::env::var(k))?;
             let client = Client::new(server);
-            client.submit(&TaskRequest {
+            let id = client.submit(&TaskRequest {
                 cmdline,
-                environment: parse_environment(&environment, |k| std::env::var(k))?,
+                environment,
             })?;
+            println!("Task submitted as {}", id);
         }
         Command::Server { listen } => {
             server::start(&listen);

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, ExitStatus};
 use tempdir::TempDir;
+use tracing::info;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TaskRequest {
@@ -18,7 +19,10 @@ pub struct TaskResult {
     pub output: Vec<String>,
 }
 
+#[tracing::instrument(level = "info", skip_all, err(level = "info"))]
 pub fn execute(request: &TaskRequest) -> crate::Result<TaskResult> {
+    info!("executing command {:?}", request.cmdline);
+
     if request.cmdline.is_empty() {
         bail!("Task command is empty")
     }
@@ -45,6 +49,15 @@ pub fn execute(request: &TaskRequest) -> crate::Result<TaskResult> {
     recv.read_to_end(&mut output)?;
 
     let status = child.wait()?;
+
+    cfg_if::cfg_if! {
+        if #[cfg(unix)] {
+            use std::os::unix::process::ExitStatusExt;
+            info!(code = status.code(), signal = status.signal(), "command completed");
+        } else {
+            info!(code = status.code(), "command completed");
+        }
+    }
 
     Ok(TaskResult {
         status,
