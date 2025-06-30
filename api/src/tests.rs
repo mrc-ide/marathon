@@ -1,7 +1,10 @@
-use crate::{server::create_app, Client, TaskRequest};
+use crate::task::{TaskInfo, TaskRequest, TaskStatus};
+use crate::{server::create_app, Client};
+use assertor::*;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::future::IntoFuture;
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::runtime;
 use tokio::sync::oneshot;
@@ -18,6 +21,8 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
         .enable_all()
         .build()?;
 
+    let app = rt.block_on(create_app())?;
+
     // Bind on a random port and then find out what port was used so we can create the client.
     let listener = rt.block_on(TcpListener::bind("127.0.0.1:0"))?;
     let addr = listener.local_addr()?;
@@ -28,13 +33,11 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
 
     std::thread::spawn(move || {
         rt.block_on(async {
-            let app = create_app();
             tokio::spawn(axum::serve(listener, app).into_future());
             // This will block until the sender is dropped, at which point we return, stop the
             // runtime and close the server.
-            rx.await
-        })
-        .unwrap();
+            let _ = rx.await;
+        });
     });
 
     let url = Url::parse(&format!("http://{addr}"))?;
@@ -42,16 +45,96 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
     Ok((client, BackgroundRuntime(tx)))
 }
 
+/// Block until the given function returns true.
+///
+/// This is useful in tests that need to wait for something to happen asynchronously.
+/// It will poll the function repeatedly until the condition is true or some timeout has elapsed.
+/// If the function returns an error that error is propagated without retries.
+fn wait_for<F>(f: F) -> anyhow::Result<()>
+where
+    F: Fn() -> anyhow::Result<bool>,
+{
+    // Nothing we test for should take a long time. 1 second is plenty of time.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if f()? {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("timeout")
+}
+
 #[test]
 fn can_submit_task() -> anyhow::Result<()> {
     let (client, _rt) = start()?;
-    let id = client.submit(&TaskRequest {
+    let id = client.task_submit(&TaskRequest {
         environment: HashMap::new(),
-        cmdline: vec!["ls".to_owned()],
+        cmdline: vec!["true".to_owned()],
     })?;
 
-    // Not the most useful test but this is pretty much the only thing that is exposed for now.
-    assert_eq!(id.get_version(), Some(uuid::Version::Random));
+    wait_for(|| Ok(client.task_get(id)?.status.is_finished()))?;
+
+    assert_eq!(
+        client.task_get(id)?,
+        TaskInfo {
+            id,
+            status: TaskStatus::Complete
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn failed_tasks_have_appropriate_status() -> anyhow::Result<()> {
+    let (client, _rt) = start()?;
+    // These two commands fail in different ways: the first one has a non-zero exit code whereas
+    // the second one does not even start. We don't yet have any way of distinguishing between the
+    // two cases.
+    let id1 = client.task_submit(&TaskRequest {
+        environment: HashMap::new(),
+        cmdline: vec!["false".to_owned()],
+    })?;
+    let id2 = client.task_submit(&TaskRequest {
+        environment: HashMap::new(),
+        cmdline: vec!["not-a-real-command".to_owned()],
+    })?;
+
+    wait_for(|| Ok(client.task_get(id1)?.status.is_finished()))?;
+    wait_for(|| Ok(client.task_get(id2)?.status.is_finished()))?;
+
+    assert_eq!(client.task_get(id1)?.status, TaskStatus::Failed);
+    assert_eq!(client.task_get(id2)?.status, TaskStatus::Failed);
+
+    Ok(())
+}
+
+#[test]
+fn can_list_tasks() -> anyhow::Result<()> {
+    let (client, _rt) = start()?;
+    let id1 = client.task_submit(&TaskRequest {
+        environment: HashMap::new(),
+        cmdline: vec!["true".to_owned()],
+    })?;
+    let id2 = client.task_submit(&TaskRequest {
+        environment: HashMap::new(),
+        cmdline: vec!["false".to_owned()],
+    })?;
+
+    wait_for(|| Ok(client.task_get(id1)?.status.is_finished()))?;
+    wait_for(|| Ok(client.task_get(id2)?.status.is_finished()))?;
+
+    let tasks = client.task_list()?;
+    assert_that!(tasks).contains_exactly(vec![
+        TaskInfo {
+            id: id1,
+            status: TaskStatus::Complete,
+        },
+        TaskInfo {
+            id: id2,
+            status: TaskStatus::Failed,
+        },
+    ]);
 
     Ok(())
 }
