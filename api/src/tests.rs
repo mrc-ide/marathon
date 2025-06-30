@@ -17,7 +17,8 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
         .enable_all()
         .build()?;
 
-    let listener = rt.block_on(TcpListener::bind("0.0.0.0:0"))?;
+    // Bind on a random port and then find out what port was used so we can create the client.
+    let listener = rt.block_on(TcpListener::bind("127.0.0.1:0"))?;
     let addr = listener.local_addr()?;
 
     let (tx, rx) = oneshot::channel();
