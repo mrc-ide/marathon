@@ -8,10 +8,11 @@ use tokio::sync::oneshot;
 
 struct BackgroundRuntime(#[allow(unused)] oneshot::Sender<()>);
 
-// Starts a server in a background thread and returns a Client setup to communicate with it.
-//
-// The server needs a tokio runtime to run. When the returned `BackgroundRuntime` object is
-// dropped, this informs the runtime that it needs to shutdown.
+/// Starts a server in a background thread and returns a `Client` that is configured to interact
+/// with it.
+///
+/// The server needs a Tokio runtime to run. When the returned `BackgroundRuntime` object is
+/// dropped, this informs the runtime that it needs to shutdown.
 fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
     let rt = runtime::Builder::new_current_thread()
         .enable_all()
@@ -21,7 +22,10 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
     let listener = rt.block_on(TcpListener::bind("127.0.0.1:0"))?;
     let addr = listener.local_addr()?;
 
+    // This channel is used to shutdown the background thread. We never actually write anything to
+    // it, but dropping the sender will unblock the receiver.
     let (tx, rx) = oneshot::channel();
+
     std::thread::spawn(move || {
         rt.block_on(async {
             let app = create_app();
