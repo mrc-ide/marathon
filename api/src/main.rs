@@ -1,9 +1,9 @@
 use anyhow::bail;
-use marathon_api::{execute, server, Client, TaskRequest};
-use std::collections::HashMap;
-
 use clap::{Parser, Subcommand};
+use marathon_api::{execute, server, task::TaskId, task::TaskRequest, worker, Client};
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 struct Args {
@@ -28,7 +28,7 @@ enum TaskCommand {
     Status {
         #[arg(long)]
         server: reqwest::Url,
-        id: Option<uuid::Uuid>,
+        id: Option<TaskId>,
     },
 }
 
@@ -37,6 +37,14 @@ enum Command {
     Server {
         #[arg(long, default_value = "0.0.0.0:8000")]
         listen: SocketAddr,
+
+        /// Start a background worker thread to run tasks.
+        #[arg(long)]
+        start_worker: bool,
+    },
+    Worker {
+        #[arg(long)]
+        server: reqwest::Url,
     },
     #[command(subcommand)]
     Task(TaskCommand),
@@ -76,7 +84,47 @@ where
         .collect()
 }
 
+fn tracing_filter() -> EnvFilter {
+    // https://github.com/tokio-rs/tracing/issues/3022
+    if let Ok(filter) = std::env::var("RUST_LOG") {
+        EnvFilter::new(filter)
+    } else {
+        EnvFilter::try_new("marathon_api=trace,info")
+            .expect("hard-coded default directive should be valid")
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+#[tracing::instrument(name = "server", skip_all)]
+async fn start_server(addr: SocketAddr, start_worker: bool) -> anyhow::Result<()> {
+    let config = server::Configuration::default();
+    let server = server::ApiServer::new(config).await?;
+
+    let listener = server.listen(addr).await?;
+
+    // If a worker thread is requested we bind onto an additional address on a random port on
+    // localhost to make sure we can reach it. Using the original listener directly isn't super
+    // reliable or cross-platform (eg. when addr is `0.0.0.0`, we may not be able to use that to
+    // connect).
+    if start_worker {
+        let extra_listener = server.listen("127.0.0.1:0").await?;
+        let extra_addr = extra_listener.local_addr()?;
+        let url = reqwest::Url::parse(&format!("http://{extra_addr}"))?;
+        let _worker = worker::run_background(url);
+
+        tokio::try_join!(listener, extra_listener)?;
+    } else {
+        listener.await?;
+    }
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_filter())
+        .init();
+
     let args = Args::parse();
     match args.cmd {
         Command::Task(TaskCommand::Run {
@@ -120,8 +168,15 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Server { listen } => {
-            server::start(&listen)?;
+        Command::Server {
+            listen,
+            start_worker,
+        } => {
+            start_server(listen, start_worker)?;
+        }
+
+        Command::Worker { server } => {
+            worker::run(server)?;
         }
     }
     Ok(())

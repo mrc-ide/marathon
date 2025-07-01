@@ -3,9 +3,8 @@
 //! The types in this module and the schema of the responses are generic and could be used in other
 //! API implementations.
 
-use axum::body::Body;
-use axum::http::{Response, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, IntoResponseParts, Response};
 use reqwest::header::CONTENT_TYPE;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -35,34 +34,40 @@ pub struct ApiError {
 /// arbitrary error using the try `?` operator. Propagated errors are always considered unexpected
 /// and are mapped to a 500 status code.
 ///
+/// The type allows any `P: IntoResponseParts` type to be attached in order to customize what
+/// headers are returned to the client.
+///
 /// This needs to be a `Result` in order for the Try operator to work. If and when the
 /// `FromResidual` trait is stabilised this can become its own struct or enum type, which will make
 /// defining methods on it more straightforward.
-pub type ApiResponse<T> = Result<ApiSuccessResponse<T>, ApiFailureResponse>;
+pub type ApiResponse<T, P = ()> =
+    Result<ResponseWrapper<ApiSuccess<T>, P>, ResponseWrapper<ApiFailure, P>>;
 
-pub struct ApiSuccessResponse<T> {
-    body: ApiSuccess<T>,
+pub struct ResponseWrapper<B, P> {
+    body: B,
     status: StatusCode,
+    parts: P,
 }
 
-pub struct ApiFailureResponse {
-    body: ApiFailure,
-    status: StatusCode,
-}
-
-impl<T: Serialize> IntoResponse for ApiSuccessResponse<T> {
-    fn into_response(self) -> Response<Body> {
-        let mut response = axum::Json(&self.body).into_response();
-        *response.status_mut() = self.status;
-        response
+impl<B: Serialize, P: IntoResponseParts> IntoResponse for ResponseWrapper<B, P> {
+    fn into_response(self) -> Response {
+        (self.status, self.parts, axum::Json(self.body)).into_response()
     }
 }
 
-impl IntoResponse for ApiFailureResponse {
-    fn into_response(self) -> Response<Body> {
-        let mut response = axum::Json(&self.body).into_response();
-        *response.status_mut() = self.status;
-        response
+impl<B> ResponseWrapper<B, ()> {
+    fn with<P: IntoResponseParts>(self, parts: P) -> ResponseWrapper<B, P> {
+        let ResponseWrapper {
+            body,
+            status,
+            parts: (),
+        } = self;
+
+        ResponseWrapper {
+            body,
+            status,
+            parts,
+        }
     }
 }
 
@@ -81,24 +86,32 @@ pub trait ApiResponseExt<T> {
 
     /// Return a 400 Bad Request error
     fn bad_request() -> Self;
+
+    /// Attach headers or extensions to the response.
+    ///
+    /// Any value which implements `IntoResponseParts` can be used. In particular, this includes
+    /// arrays of header name and value pairs.
+    fn with<P: IntoResponseParts>(self, parts: P) -> ApiResponse<T, P>;
 }
 impl<T> ApiResponseExt<T> for ApiResponse<T> {
     fn success(data: T) -> Self {
-        Ok(ApiSuccessResponse {
+        Ok(ResponseWrapper {
             body: ApiSuccess { data },
             status: StatusCode::OK,
+            parts: (),
         })
     }
 
     fn created(data: T) -> Self {
-        Ok(ApiSuccessResponse {
+        Ok(ResponseWrapper {
             body: ApiSuccess { data },
             status: StatusCode::CREATED,
+            parts: (),
         })
     }
 
     fn not_found() -> Self {
-        Err(ApiFailureResponse {
+        Err(ResponseWrapper {
             body: ApiFailure {
                 errors: vec![ApiError {
                     error: "NOT_FOUND".to_owned(),
@@ -106,11 +119,12 @@ impl<T> ApiResponseExt<T> for ApiResponse<T> {
                 }],
             },
             status: StatusCode::NOT_FOUND,
+            parts: (),
         })
     }
 
     fn bad_request() -> Self {
-        Err(ApiFailureResponse {
+        Err(ResponseWrapper {
             body: ApiFailure {
                 errors: vec![ApiError {
                     error: "BAD_REQUEST".to_owned(),
@@ -118,7 +132,15 @@ impl<T> ApiResponseExt<T> for ApiResponse<T> {
                 }],
             },
             status: StatusCode::BAD_REQUEST,
+            parts: (),
         })
+    }
+
+    fn with<P: IntoResponseParts>(self, parts: P) -> ApiResponse<T, P> {
+        match self {
+            Ok(inner) => Ok(inner.with(parts)),
+            Err(inner) => Err(inner.with(parts)),
+        }
     }
 }
 
@@ -126,9 +148,12 @@ impl<T> ApiResponseExt<T> for ApiResponse<T> {
 ///
 /// This is always considered an unhandled server error. Expected error should be created via
 /// methods on ApiResponse.
-impl<E: std::fmt::Display> From<E> for ApiFailureResponse {
-    fn from(error: E) -> ApiFailureResponse {
-        ApiFailureResponse {
+impl<E: std::fmt::Display, P> From<E> for ResponseWrapper<ApiFailure, P>
+where
+    P: Default + IntoResponseParts,
+{
+    fn from(error: E) -> ResponseWrapper<ApiFailure, P> {
+        ResponseWrapper {
             body: ApiFailure {
                 errors: vec![ApiError {
                     error: "INTERNAL_SERVER_ERROR".to_owned(),
@@ -136,6 +161,7 @@ impl<E: std::fmt::Display> From<E> for ApiFailureResponse {
                 }],
             },
             status: StatusCode::INTERNAL_SERVER_ERROR,
+            parts: P::default(),
         }
     }
 }

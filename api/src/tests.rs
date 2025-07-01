@@ -1,11 +1,11 @@
+use crate::server::{ApiServer, Configuration};
 use crate::task::{TaskInfo, TaskRequest, TaskStatus};
-use crate::{server::create_app, Client};
+use crate::{worker, Client};
 use assertor::*;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::future::IntoFuture;
 use std::time::{Duration, Instant};
-use tokio::net::TcpListener;
 use tokio::runtime;
 use tokio::sync::oneshot;
 
@@ -16,15 +16,18 @@ struct BackgroundRuntime(#[allow(unused)] oneshot::Sender<()>);
 ///
 /// The server needs a Tokio runtime to run. When the returned `BackgroundRuntime` object is
 /// dropped, this informs the runtime that it needs to shutdown.
-fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
+fn start_server() -> anyhow::Result<(Client, BackgroundRuntime)> {
     let rt = runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let app = rt.block_on(create_app())?;
+    let config = Configuration {
+        polling_interval: Duration::from_secs(0),
+    };
+    let app = rt.block_on(ApiServer::new(config))?;
 
     // Bind on a random port and then find out what port was used so we can create the client.
-    let listener = rt.block_on(TcpListener::bind("127.0.0.1:0"))?;
+    let listener = rt.block_on(app.listen("127.0.0.1:0"))?;
     let addr = listener.local_addr()?;
 
     // This channel is used to shutdown the background thread. We never actually write anything to
@@ -33,7 +36,7 @@ fn start() -> anyhow::Result<(Client, BackgroundRuntime)> {
 
     std::thread::spawn(move || {
         rt.block_on(async {
-            tokio::spawn(axum::serve(listener, app).into_future());
+            tokio::spawn(listener.into_future());
             // This will block until the sender is dropped, at which point we return, stop the
             // runtime and close the server.
             let _ = rx.await;
@@ -55,7 +58,7 @@ where
     F: Fn() -> anyhow::Result<bool>,
 {
     // Nothing we test for should take a long time. 1 second is plenty of time.
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         if f()? {
             return Ok(());
@@ -64,9 +67,11 @@ where
     anyhow::bail!("timeout")
 }
 
-#[test]
+#[test_log::test]
 fn can_submit_task() -> anyhow::Result<()> {
-    let (client, _rt) = start()?;
+    let (client, _rt) = start_server()?;
+    let _worker = worker::run_background(client.url().clone());
+
     let id = client.task_submit(&TaskRequest {
         environment: HashMap::new(),
         cmdline: vec!["true".to_owned()],
@@ -85,9 +90,11 @@ fn can_submit_task() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
+#[test_log::test]
 fn failed_tasks_have_appropriate_status() -> anyhow::Result<()> {
-    let (client, _rt) = start()?;
+    let (client, _rt) = start_server()?;
+    let _worker = worker::run_background(client.url().clone());
+
     // These two commands fail in different ways: the first one has a non-zero exit code whereas
     // the second one does not even start. We don't yet have any way of distinguishing between the
     // two cases.
@@ -109,9 +116,11 @@ fn failed_tasks_have_appropriate_status() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
+#[test_log::test]
 fn can_list_tasks() -> anyhow::Result<()> {
-    let (client, _rt) = start()?;
+    let (client, _rt) = start_server()?;
+    let _worker = worker::run_background(client.url().clone());
+
     let id1 = client.task_submit(&TaskRequest {
         environment: HashMap::new(),
         cmdline: vec!["true".to_owned()],
