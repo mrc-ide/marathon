@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
                 environment,
             })?;
             for l in result.output {
-                println!("{}", l);
+                println!("{l}");
             }
             println!("Task terminated with {}", result.status);
         }
@@ -105,7 +105,7 @@ fn main() -> anyhow::Result<()> {
                 cmdline,
                 environment,
             })?;
-            println!("Task submitted as {}", id);
+            println!("Task submitted as {id}");
         }
 
         Command::Task(TaskCommand::Status { server, id }) => {
