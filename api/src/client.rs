@@ -1,6 +1,8 @@
 use crate::messages::TaskSubmitResponse;
 use crate::responses::ResponseExt;
 use crate::{TaskInfo, TaskRequest};
+use anyhow::anyhow;
+use reqwest::StatusCode;
 use uuid::Uuid;
 
 pub struct Client {
@@ -32,7 +34,14 @@ impl Client {
             .client
             .get(self.base_url.join("tasks/")?.join(&id.to_string())?)
             .send()?
-            .api_response::<TaskInfo>()?;
+            .api_response::<TaskInfo>()
+            .map_err(|e| {
+                if e.has_status(StatusCode::NOT_FOUND) {
+                    anyhow!("Unknown task {id}")
+                } else {
+                    e.into()
+                }
+            })?;
 
         Ok(response)
     }

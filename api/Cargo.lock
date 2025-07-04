@@ -1076,6 +1076,7 @@ dependencies = [
  "shlex",
  "sqlx",
  "tempdir",
+ "thiserror",
  "tokio",
  "tower-http",
  "tracing",

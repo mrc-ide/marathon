@@ -3,7 +3,6 @@
 //! The types in this module and the schema of the responses are generic and could be used in other
 //! API implementations.
 
-use anyhow::bail;
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
@@ -79,6 +78,9 @@ pub trait ApiResponseExt<T> {
 
     /// Return a 404 Not Found error
     fn not_found() -> Self;
+
+    /// Return a 400 Bad Request error
+    fn bad_request() -> Self;
 }
 impl<T> ApiResponseExt<T> for ApiResponse<T> {
     fn success(data: T) -> Self {
@@ -106,6 +108,18 @@ impl<T> ApiResponseExt<T> for ApiResponse<T> {
             status: StatusCode::NOT_FOUND,
         })
     }
+
+    fn bad_request() -> Self {
+        Err(ApiFailureResponse {
+            body: ApiFailure {
+                errors: vec![ApiError {
+                    error: "BAD_REQUEST".to_owned(),
+                    detail: None,
+                }],
+            },
+            status: StatusCode::BAD_REQUEST,
+        })
+    }
 }
 
 /// This trait implementation allows any error to be converted to an ApiResponse.
@@ -126,30 +140,74 @@ impl<E: std::fmt::Display> From<E> for ApiFailureResponse {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ApiClientError {
+    HTTPError {
+        status: StatusCode,
+        url: reqwest::Url,
+        body: Option<ApiFailure>,
+    },
+    Other(#[from] reqwest::Error),
+}
+
+impl ApiClientError {
+    pub fn has_status(&self, expected: StatusCode) -> bool {
+        match self {
+            ApiClientError::HTTPError { status, .. } => *status == expected,
+            ApiClientError::Other(inner) => {
+                // The reqwest::Error in the Other variant is used for for I/O and deserialization
+                // errors, not for error HTTP status codes.
+                assert!(inner.status().is_none());
+                false
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ApiClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiClientError::Other(e) => e.fmt(f),
+            ApiClientError::HTTPError { status, url, body } => {
+                if let Some(detail) = body
+                    .as_ref()
+                    .and_then(|b| b.errors.first())
+                    .and_then(|e| e.detail.as_ref())
+                {
+                    write!(f, "API error {status} for url {url}: {detail}")
+                } else {
+                    write!(f, "API error {status} for url {url}")
+                }
+            }
+        }
+    }
+}
+
 /// Extension trait for reqwest's response type.
 pub trait ResponseExt {
     /// Decode a response from the API and return its body.
     ///
     /// The top-level wrapper object is unpeeled and only the useful contents are returned. HTTP
     /// errors are decoded and returned as an `Err`.
-    fn api_response<T: DeserializeOwned>(self) -> crate::Result<T>;
+    fn api_response<T: DeserializeOwned>(self) -> Result<T, ApiClientError>;
 }
 impl ResponseExt for reqwest::blocking::Response {
-    fn api_response<T: DeserializeOwned>(self) -> crate::Result<T> {
-        let code = self.status();
+    fn api_response<T: DeserializeOwned>(self) -> Result<T, ApiClientError> {
+        let status = self.status();
 
-        if code.is_client_error() || code.is_server_error() {
+        if status.is_client_error() || status.is_server_error() {
             let content_type = self.headers().get(CONTENT_TYPE);
             let url = self.url().clone();
             if content_type.is_some_and(|v| v == "application/json") {
-                let body = self.json::<ApiFailure>()?;
-                if let Some(detail) = body.errors.first().and_then(|e| e.detail.as_ref()) {
-                    bail!("API error {} for url {}: {}", code, url, detail);
-                } else {
-                    bail!("API error {} for url {}", code, url);
-                }
+                // We ignore errors decoding the body. If there are any we just use None.
+                let body = self.json::<ApiFailure>().ok();
+                return Err(ApiClientError::HTTPError { status, url, body });
             } else {
-                bail!("HTTP status error {} for url {}", code, url);
+                return Err(ApiClientError::HTTPError {
+                    status,
+                    url,
+                    body: None,
+                });
             }
         }
 

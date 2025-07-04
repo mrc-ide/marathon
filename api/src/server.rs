@@ -82,7 +82,7 @@ async fn index() -> ApiResponse<()> {
 }
 
 async fn fallback_handler() -> ApiResponse<()> {
-    ApiResponse::not_found()
+    ApiResponse::bad_request()
 }
 
 pub async fn create_app() -> crate::Result<Router<()>> {
