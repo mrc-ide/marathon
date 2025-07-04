@@ -16,7 +16,7 @@ impl Database {
     }
 
     pub async fn task_create(&self) -> crate::Result<Uuid> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         sqlx::query("INSERT INTO task (id, status) VALUES ($1, $2)")
             .bind(id)
             .bind(TaskStatus::Pending)
@@ -81,7 +81,7 @@ mod tests {
     #[tokio::test]
     async fn returns_none_on_missing_task() -> anyhow::Result<()> {
         let db = Database::open_in_memory().await?;
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
 
         assert_that!(db.task_get_status(id).await?).is_none();
 
@@ -107,7 +107,7 @@ mod tests {
     #[tokio::test]
     async fn updating_invalid_task_fails() -> anyhow::Result<()> {
         let db = Database::open_in_memory().await?;
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
 
         let result = db.task_update(id, TaskStatus::Running).await;
         assert_that!(result).err().has_message("invalid task");
