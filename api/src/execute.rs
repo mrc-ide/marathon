@@ -11,15 +11,15 @@ use crate::task::{TaskRequest, TaskResult};
 pub fn execute(request: &TaskRequest) -> crate::Result<TaskResult> {
     info!("executing command {:?}", request.cmdline);
 
-    if request.cmdline.is_empty() {
+    let Some((program, args)) = request.cmdline.split_first() else {
         bail!("Task command is empty")
-    }
+    };
 
     let (mut recv, send) = std::io::pipe()?;
 
     let wd = TempDir::new("task")?;
-    let mut child = Command::new(&request.cmdline[0])
-        .args(&request.cmdline[1..])
+    let mut child = Command::new(program)
+        .args(args)
         .envs(&request.environment)
         .current_dir(&wd)
         .stdout(send.try_clone()?)
