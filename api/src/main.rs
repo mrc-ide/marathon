@@ -1,5 +1,5 @@
 use anyhow::bail;
-use marathon_api::{server, task, Client, TaskRequest};
+use marathon_api::{execute, server, Client, TaskRequest};
 use std::collections::HashMap;
 
 use clap::{Parser, Subcommand};
@@ -12,7 +12,7 @@ struct Args {
 }
 
 #[derive(Subcommand, Clone)]
-enum Command {
+enum TaskCommand {
     Run {
         #[arg(short = 'e', long = "env")]
         environment: Vec<String>,
@@ -25,10 +25,21 @@ enum Command {
         environment: Vec<String>,
         cmdline: Vec<String>,
     },
+    Status {
+        #[arg(long)]
+        server: reqwest::Url,
+        id: Option<uuid::Uuid>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum Command {
     Server {
         #[arg(long, default_value = "0.0.0.0:8000")]
         listen: SocketAddr,
     },
+    #[command(subcommand)]
+    Task(TaskCommand),
 }
 
 // Parse an argument given to the -e flag, and returns an optional key-value pair:
@@ -68,35 +79,49 @@ where
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     match args.cmd {
-        Command::Run {
+        Command::Task(TaskCommand::Run {
             cmdline,
             environment,
-        } => {
+        }) => {
             let environment = parse_environment(&environment, |k| std::env::var(k))?;
-            let result = task::execute(&TaskRequest {
+            let result = execute(&TaskRequest {
                 cmdline,
                 environment,
             })?;
             for l in result.output {
-                println!("{}", l);
+                println!("{l}");
             }
             println!("Task terminated with {}", result.status);
         }
-        Command::Submit {
+
+        Command::Task(TaskCommand::Submit {
             server,
             cmdline,
             environment,
-        } => {
+        }) => {
             let environment = parse_environment(&environment, |k| std::env::var(k))?;
             let client = Client::new(server);
-            let id = client.submit(&TaskRequest {
+            let id = client.task_submit(&TaskRequest {
                 cmdline,
                 environment,
             })?;
-            println!("Task submitted as {}", id);
+            println!("Task submitted as {id}");
         }
+
+        Command::Task(TaskCommand::Status { server, id }) => {
+            let client = Client::new(server);
+            if let Some(id) = id {
+                let task = client.task_get(id)?;
+                println!("Task status: {:?}", task.status);
+            } else {
+                for task in client.task_list()? {
+                    println!("{}: {:?}", task.id, task.status);
+                }
+            }
+        }
+
         Command::Server { listen } => {
-            server::start(&listen);
+            server::start(&listen)?;
         }
     }
     Ok(())
