@@ -1,0 +1,17 @@
+---
+title: "marathon"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{marathon}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+`marathon` is a package to help organise running a model over-and-over-again for use while training an emulator.  It is designed to help formalise a few patterns that we see and help avoid a lot of tedious bookkeeping.
